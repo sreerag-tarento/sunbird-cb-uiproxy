@@ -4941,8 +4941,7 @@ export const API_LIST = {
                   checksNeeded: [CHECK.ROLE],
                   // tslint:disable-next-line: object-literal-sort-keys
                   ROLE_CHECK: [
-                     ROLE.SPV_ADMIN,
-                      ROLE.MDO_ADMIN,
+                    ROLE.PUBLIC,
                   ],
         },
         '/proxies/v8/community/v1/delete/:communityId': {
@@ -4973,6 +4972,41 @@ export const API_LIST = {
             ROLE_CHECK: [
                  ROLE.PUBLIC,
             ],
+        },
+        '/proxies/v8/community/v1/join': {
+                  checksNeeded: [CHECK.ROLE],
+                  // tslint:disable-next-line: object-literal-sort-keys
+                  ROLE_CHECK: [
+                    ROLE.PUBLIC,
+                  ],
+        },
+        '/proxies/v8/community/v1/unjoin': {
+                  checksNeeded: [CHECK.ROLE],
+                  // tslint:disable-next-line: object-literal-sort-keys
+                  ROLE_CHECK: [
+                    ROLE.PUBLIC,
+                  ],
+        },
+        '/proxies/v8/community/v1/user/communities': {
+                  checksNeeded: [CHECK.ROLE],
+                  // tslint:disable-next-line: object-literal-sort-keys
+                  ROLE_CHECK: [
+                    ROLE.PUBLIC,
+                  ],
+        },
+        '/proxies/v8/community/v1/community/listuser/:communityId': {
+                  checksNeeded: [CHECK.ROLE],
+                  // tslint:disable-next-line: object-literal-sort-keys
+                  ROLE_CHECK: [
+                    ROLE.PUBLIC,
+                  ],
+        },
+        '/proxies/v8/community/v1/search': {
+                  checksNeeded: [CHECK.ROLE],
+                  // tslint:disable-next-line: object-literal-sort-keys
+                  ROLE_CHECK: [
+                    ROLE.PUBLIC,
+                  ],
         },
     },
     URL_PATTERN:
@@ -5613,5 +5647,10 @@ export const API_LIST = {
             '/proxies/v8/feedDiscussion/answerPosts',
             '/proxies/v8/feedDiscussion/downVote/:id',
             '/proxies/v8/courseRecommend/v1/courses',
+            '/proxies/v8/community/v1/join',
+            '/proxies/v8/community/v1/unjoin',
+            '/proxies/v8/community/v1/user/communities',
+            '/proxies/v8/community/v1/community/listuser/:communityId',
+            '/proxies/v8/community/v1/search',
            ],
 }
