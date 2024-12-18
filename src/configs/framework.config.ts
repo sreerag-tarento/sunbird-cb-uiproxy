@@ -7,7 +7,7 @@ const packageObj = JSON.parse(fs.readFileSync('package.json', 'utf8'))
 const uuidv1 = require('uuid/v1')
 
 const consistency = getConsistencyLevel(CONSTANTS.PORTAL_CASSANDRA_CONSISTENCY_LEVEL)
-const replicationStrategy = {class: 'SimpleStrategy', replication_factor: 3}
+const replicationStrategy = {class: 'SimpleStrategy', replication_factor: CONSTANTS.CASSANDRA_REPLICATION_FORM || 3}
 function getIPList() {
     return CONSTANTS.CASSANDRA_IP.split(',')
 }
