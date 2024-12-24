@@ -27,7 +27,7 @@ const API_END_POINTS = {
     kongCreateUser: `${CONSTANTS.KONG_API_BASE}/user/v3/create`,
     kongSearchUser: `${CONSTANTS.KONG_API_BASE}/user/v1/search`,
     kongSendWelcomeEmail: `${CONSTANTS.KONG_API_BASE}/private/user/v1/notification/email`,
-    kongUpdateUser: `${CONSTANTS.KONG_API_BASE}/user/private/v1/update`,
+    kongUpdateUser: `${CONSTANTS.KONG_API_BASE}/super/user/private/v1/update`,
     kongUserRead: (userId: string) => `${CONSTANTS.KONG_API_BASE}/user/v2/read/${userId}`,
     kongUserResetPassword: `${CONSTANTS.KONG_API_BASE}/private/user/v1/password/reset`,
     // tslint:disable-next-line: object-literal-sort-keys
