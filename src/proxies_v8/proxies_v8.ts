@@ -951,12 +951,12 @@ proxiesV8.post('/program/v1/batch/getParticipants', async (req, res) => {
         'x-authenticated-user-token': extractUserToken(req),
       },
     })
-    const totalCount = response.data.result.batch.count != null ? response.data.result.batch.count : 0
+    const totalCount = response.data.result.batch.totalCount != null ? response.data.result.batch.totalCount : 0
     const activeTrueCount = response.data.result.batch.activeCount != null ? response.data.result.batch.activeCount : 0
     const activeFalseCount = response.data.result.batch.inactiveCount != null ? response.data.result.batch.inactiveCount : 0
-    if ((typeof response.data.result.batch.participants !== 'undefined' && response.data.result.batch.participants.length > 0)) {
 
-      const participants = response.data.result.batch.participants
+    const participants = response.data?.result?.batch?.participants ?? []
+    if (participants && participants.length > 0) {
       const activeStatusMap: { [key: string]: boolean } = {}
       const userIds: string[] = []
       for (const participant of participants) {
@@ -1005,6 +1005,7 @@ proxiesV8.post('/program/v1/batch/getParticipants', async (req, res) => {
         }
       }
     }
+
     res.status(response.status).send({ userlist, totalCount, activeCount: activeTrueCount, inactiveCount: activeFalseCount })
   } catch (err) {
     logError(err)
