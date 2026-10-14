@@ -7537,6 +7537,8 @@ export const API_LIST = {
             checksNeeded: [CHECK.ROLE],
             // tslint:disable-next-line: object-literal-sort-keys
             ROLE_CHECK: [
+                ROLE.MDO_ADMIN,
+                ROLE.MDO_LEADER,
                 ROLE.AI_ASSESSMENT_CREATOR,
             ],
         },
