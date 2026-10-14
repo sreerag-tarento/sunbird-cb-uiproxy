@@ -36,7 +36,7 @@ import { lookerDashboard } from './lookerIntegration'
 
 const API_END_POINTS = {
   batchParticipantsApi: `${CONSTANTS.KONG_API_BASE}/course/v1/batch/participants/list`,
-  programBatchParticipantsApi: `${CONSTANTS.KONG_API_BASE}/program/v1/batch/participants/list`,
+  programBatchParticipantsApi: `${CONSTANTS.KONG_API_BASE}/program/v2/batch/participants/list`,
   contentNotificationEmail: `${CONSTANTS.NOTIFICATION_SERVIC_API_BASE}/v1/notification/send/sync`,
   externalContentbatchParticipantsApi: `${CONSTANTS.KONG_API_BASE}/externaltraining/v1/batch/participants/list`,
   kongExtOrgSearch: `${CONSTANTS.KONG_API_BASE}/org/v1/cb/ext/search`,
@@ -929,7 +929,7 @@ proxiesV8.use('/openprogram/*',
   proxyCreatorSunbird(express.Router(), `${CONSTANTS.KONG_API_BASE}`)
 )
 
-proxiesV8.post('/program/v1/batch/getParticipants', async (req, res) => {
+proxiesV8.post('/program/v2/batch/getParticipants', async (req, res) => {
   try {
     const { batchId, deptName, limit, currentOffSet } = req.body.request.filters
     const reqBody = {
