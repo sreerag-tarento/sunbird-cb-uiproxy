@@ -2445,6 +2445,13 @@ export const API_LIST = {
                 ROLE.PUBLIC,
             ],
         },
+        '/proxies/v8/workflow/blendedprogram/details': {
+            checksNeeded: [CHECK.ROLE],
+            // tslint:disable-next-line: object-literal-sort-keys
+            ROLE_CHECK: [
+                ROLE.PUBLIC,
+            ],
+        },
         '/proxies/v8/workflow/blendedprogram/update/pc': {
             checksNeeded: [CHECK.ROLE],
             // tslint:disable-next-line: object-literal-sort-keys
@@ -8829,6 +8836,7 @@ export const API_LIST = {
             '/proxies/v8/workflow/blendedprogram/searchv2/pc',
             '/proxies/v8/workflow/blendedprogram/searchv2/mdo',
             '/proxies/v8/workflow/blendedprogram/user/search',
+            '/proxies/v8/workflow/blendedprogram/details',
             '/proxies/v8/workflow/blendedprogram/update/pc',
             '/proxies/v8/workflow/blendedprogram/update/mdo',
             '/proxies/v8/workflow/blendedprogram/read/mdo/:id',
