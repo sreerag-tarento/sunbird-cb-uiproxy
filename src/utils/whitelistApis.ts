@@ -3113,7 +3113,7 @@ export const API_LIST = {
                 ROLE.CBP_ADMIN,
                 ROLE.CONTENT_CREATOR,
                 ROLE.CONTENT_PUBLISHER,
-                ROLE.CONTENT_REVIEWER
+                ROLE.CONTENT_REVIEWER,
             ],
         },
         '/proxies/v8/catalog/v1/sector': {
