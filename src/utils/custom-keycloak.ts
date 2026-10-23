@@ -11,6 +11,118 @@ const async = require('async')
 
 const composable = require('composable-middleware')
 
+const stripProtocol = (host: string | undefined): string =>
+  (host || '').replace(/^https?:\/\//, '').toLowerCase()
+
+// Maps the host a user logs out from to the host they should land on, for the
+// portals that are served from their own dedicated destination host.
+const dedicatedPortalLogoutTargets = (): Array<{ portalHost: string, destinationHost: string }> => [
+  { portalHost: stripProtocol(CONSTANTS.IIM_PORTAL_HOST), destinationHost: CONSTANTS.IIIDEM_PORTAL_HOST },
+  { portalHost: stripProtocol(CONSTANTS.ADI_PORTAL_HOST), destinationHost: CONSTANTS.ADIKARMAYOGI_PORTAL_HOST },
+  { portalHost: stripProtocol(CONSTANTS.MNRE_PORTAL_HOST), destinationHost: CONSTANTS.MNRE_DESTINATION_PORTAL_HOST },
+]
+
+// Derive the final destination the browser lands on after KC clears its SSO session.
+// Always use https:// — req.protocol is 'http' inside K8s pods (TLS terminated at ingress).
+// Keycloak rejects http:// post_logout_redirect_uri values that only have https:// registered.
+// IIM / ADI / MNRE portal hosts   -> their dedicated destination host  e.g. https://iiidem.x.net/
+// portal.*                        -> strip first subdomain  e.g. portal.dev.x.net -> https://dev.x.net/
+// LOGOUT_PUBLIC_HOME_HOSTS list   -> append /public/home  e.g. spv.dev.x.net -> https://spv.dev.x.net/public/home
+// all other                       -> root '/'  e.g. https://host/
+export function resolvePostLogoutRedirect(logoutHost: string): string {
+  const lowerHost = logoutHost.toLowerCase()
+  const dedicated = dedicatedPortalLogoutTargets().find((t) => t.portalHost && t.portalHost === lowerHost)
+  if (dedicated) {
+    return 'https://' + dedicated.destinationHost + '/'
+  }
+  const hostParts = logoutHost.split('.')
+  if (hostParts.length > 2 && hostParts[0].toLowerCase() === 'portal') {
+    return 'https://' + hostParts.slice(1).join('.') + '/'
+  }
+  const publicHomeHosts = (CONSTANTS.LOGOUT_PUBLIC_HOME_HOSTS || '')
+    .split(',')
+    .map((h: string) => h.trim().toLowerCase())
+    .filter(Boolean)
+  if (publicHomeHosts.includes(lowerHost)) {
+    return 'https://' + logoutHost + '/public/home'
+  }
+  return 'https://' + logoutHost + '/'
+}
+
+// Honour a redirect_uri query param (KC7 clients pass this) when safe (same base domain).
+function pickPostLogoutRedirect(rawRedirectUri: unknown, logoutHost: string, defaultRedirect: string): string {
+  logInfo('[logout] redirect_uri query param=' + (typeof rawRedirectUri === 'string' && rawRedirectUri ? rawRedirectUri : '(none)'))
+  if (!rawRedirectUri || typeof rawRedirectUri !== 'string') {
+    return defaultRedirect
+  }
+  try {
+    const redirectParsed = new URL(rawRedirectUri)
+    const hostParts = logoutHost.split('.')
+    const baseDomain = hostParts.length > 1 ? hostParts.slice(-2).join('.') : logoutHost
+    const isSameHost = redirectParsed.hostname === logoutHost
+    const isSameDomain = redirectParsed.hostname.endsWith('.' + baseDomain)
+    logInfo(
+      '[logout] redirect_uri validation' +
+      ' parsed.hostname=' + redirectParsed.hostname +
+      ' baseDomain=' + baseDomain +
+      ' isSameHost=' + isSameHost +
+      ' isSameDomain=' + isSameDomain
+    )
+    if (isSameHost || isSameDomain) {
+      logInfo('[logout] redirect_uri accepted -> postLogoutRedirect=' + rawRedirectUri)
+      return rawRedirectUri
+    }
+    logInfo('[logout] redirect_uri rejected (cross-domain), keeping default')
+  } catch (err) {
+    logInfo('[logout] redirect_uri invalid URL, ignoring: ' + rawRedirectUri + ' (' + err + ')')
+  }
+  return defaultRedirect
+}
+
+// Cookie domain used for clearing connect.sid: '.parent.domain' for hosts with more than two labels.
+function resolveCookieDomain(host: string | undefined): string {
+  if (host === undefined) {
+    return ''
+  }
+  if (host.includes('localhost')) {
+    return 'localhost'
+  }
+  const hostParts = host.split('.')
+  return hostParts.length > 2 ? '.' + hostParts.slice(1).join('.') : host
+}
+
+function clearLogoutCookies(req: express.Request, res: express.Response): void {
+  const domainUrl = resolveCookieDomain(req.get('host'))
+  logInfo('[logout] clearing cookies for domain=' + domainUrl)
+  res.clearCookie('connect.sid', { httpOnly: true, secure: true })
+  res.clearCookie('connect.sid', { domain: domainUrl, httpOnly: false, path: '/', secure: true })
+}
+
+// Build the KC front-channel logout URL. Redirecting the browser through this
+// clears the KC SSO browser cookie — backchannel revocation alone does not do this.
+function buildKcLogoutUrl(
+  keycloak: InstanceType<typeof keycloakConnect>,
+  req: express.Request,
+  postLogoutRedirect: string
+): string {
+  if (typeof (keycloak as any).logoutUrl !== 'function') {
+    logInfo('[logout] logoutUrl not a function, falling back to postLogoutRedirect')
+    return postLogoutRedirect
+  }
+  let url: string = (keycloak as any).logoutUrl(postLogoutRedirect)
+  // Without id_token_hint, KC18+ shows the "Do you want to log out?"
+  // confirmation page instead of silently redirecting.
+  const idTokenHint = req.session ? (req.session as any).idToken : undefined
+  if (idTokenHint) {
+    url += '&id_token_hint=' + encodeURIComponent(idTokenHint)
+    logInfo('[logout] appended id_token_hint to KC front-channel logout URL')
+  } else {
+    logInfo('[logout] no id_token in session; KC will show the logout confirmation page')
+  }
+  logInfo('[logout] KC front-channel logout URL=' + url)
+  return url
+}
+
 // tslint:disable-next-line: no-any
 export async function deauthenticateKeycloakSession(reqObj: any): Promise<void> {
   const keyCloakPropertyName = 'keycloak-token'
@@ -162,183 +274,7 @@ export class CustomKeycloak {
     // session and inject id_token_hint — required by KC18+ to auto-redirect
     // without showing the Keycloak logout confirmation page.
     if (req.path === '/logout') {
-      const logoutHost = req.hostname
-      const logoutProtocol = req.protocol
-      logInfo(
-        '[logout] request intercepted' +
-        ' host=' + logoutHost +
-        ' protocol=' + logoutProtocol +
-        ' url=' + req.url
-      )
-      logDebug('[logout] headers=' + JSON.stringify(req.headers))
-      logDebug('[logout] query=' + JSON.stringify(req.query))
-      logDebug('[logout] cookies=' + JSON.stringify(req.cookies))
-      logDebug('[logout] referer=' + req.headers.referer)
-      // Derive the final destination the browser lands on after KC clears its SSO session.
-      // Always use https:// — req.protocol is 'http' inside K8s pods (TLS terminated at ingress).
-      // Keycloak rejects http:// post_logout_redirect_uri values that only have https:// registered.
-      // IIM_PORTAL_HOST (iiidem-portal.*) -> IIIDEM_PORTAL_HOST  e.g. iiidem-portal.x.net -> https://iiidem.x.net/
-      // portal.*                      -> strip first subdomain  e.g. portal.dev.x.net -> https://dev.x.net/
-      // LOGOUT_PUBLIC_HOME_HOSTS list -> append /public/home  e.g. spv.dev.x.net -> https://spv.dev.x.net/public/home
-      // all other                     -> root '/'  e.g. https://host/
-      const publicHomeHosts = (CONSTANTS.LOGOUT_PUBLIC_HOME_HOSTS || '')
-        .split(',')
-        .map((h: string) => h.trim().toLowerCase())
-        .filter(Boolean)
-      const iimPortalHost = (CONSTANTS.IIM_PORTAL_HOST || '')
-        .replace(/^https?:\/\//, '')
-        .toLowerCase()
-      const adikarmayogi = (CONSTANTS.ADI_PORTAL_HOST || '')
-        .replace(/^https?:\/\//, '')
-        .toLowerCase()
-      let postLogoutRedirect = 'https://' + logoutHost + '/'
-      logInfo(
-            '[logout] New log added--->iiidem-portal host, redirecting to IIIDEM_PORTAL_HOST' + iimPortalHost +
-            ' -> postLogoutRedirect=' + postLogoutRedirect
-          )
-      try {
-        const hostParts = logoutHost.split('.')
-        if (iimPortalHost && logoutHost.toLowerCase() === iimPortalHost) {
-          postLogoutRedirect = 'https://' + CONSTANTS.IIIDEM_PORTAL_HOST + '/'
-          logInfo(
-            '[logout] iiidem-portal host, redirecting to IIIDEM_PORTAL_HOST' +
-            ' -> postLogoutRedirect=' + postLogoutRedirect
-          )
-        } else if (adikarmayogi && logoutHost.toLowerCase() === adikarmayogi) {
-          postLogoutRedirect = 'https://' + CONSTANTS.ADIKARMAYOGI_PORTAL_HOST + '/'
-          logInfo(
-            '[logout] adikarmayogi host, redirecting to ADIKARMAYOGI_PORTAL_HOST' +
-            ' -> postLogoutRedirect=' + postLogoutRedirect
-          )
-        } else if (hostParts.length > 2 && hostParts[0].toLowerCase() === 'portal') {
-          postLogoutRedirect = 'https://' + hostParts.slice(1).join('.') + '/'
-          logInfo(
-            '[logout] portal host, stripping subdomain' +
-            ' -> postLogoutRedirect=' + postLogoutRedirect
-          )
-        } else if (publicHomeHosts.includes(logoutHost.toLowerCase())) {
-          postLogoutRedirect = 'https://' + logoutHost + '/public/home'
-          logInfo(
-            '[logout] host in LOGOUT_PUBLIC_HOME_HOSTS, appending /public/home' +
-            ' -> postLogoutRedirect=' + postLogoutRedirect
-          )
-        } else {
-          logInfo(
-            '[logout] host not in special lists, using https root' +
-            ' -> postLogoutRedirect=' + postLogoutRedirect
-          )
-        }
-      } catch (_e) { /* keep default */ }
-
-      // Honour a redirect_uri query param (KC7 clients pass this) when safe (same base domain).
-      const rawRedirectUri = req.query.redirect_uri
-      logInfo('[logout] redirect_uri query param=' + (rawRedirectUri || '(none)'))
-      if (rawRedirectUri && typeof rawRedirectUri === 'string') {
-        try {
-          const redirectParsed = new URL(rawRedirectUri)
-          const hostParts = logoutHost.split('.')
-          const baseDomain =
-            hostParts.length > 1 ? hostParts.slice(-2).join('.') : logoutHost
-          const isSameHost = redirectParsed.hostname === logoutHost
-          const isSameDomain = redirectParsed.hostname.endsWith('.' + baseDomain)
-          logInfo(
-            '[logout] redirect_uri validation' +
-            ' parsed.hostname=' + redirectParsed.hostname +
-            ' baseDomain=' + baseDomain +
-            ' isSameHost=' + isSameHost +
-            ' isSameDomain=' + isSameDomain
-          )
-          if (isSameHost || isSameDomain) {
-            postLogoutRedirect = rawRedirectUri
-            logInfo('[logout] redirect_uri accepted -> postLogoutRedirect=' + postLogoutRedirect)
-          } else {
-            logInfo('[logout] redirect_uri rejected (cross-domain), keeping default')
-          }
-        } catch (_e) {
-          logInfo('[logout] redirect_uri invalid URL, ignoring: ' + rawRedirectUri)
-        }
-      }
-
-      logInfo('[logout] final postLogoutRedirect=' + postLogoutRedirect)
-
-      // Terminate the Keycloak SSO session server-side via backchannel revocation
-      // (POST to KC logout endpoint with refresh_token). This avoids the browser
-      // confirmation page entirely and does not require id_token_hint.
-      // deauthenticatedNew only clears the local session; this.deauthenticated
-      // also revokes the refresh_token at KC, killing the SSO session.
-      const clearCookies = () => {
-        const host = req.get('host')
-        let domainUrl = ''
-        if (host !== undefined) {
-          if (host.includes('localhost')) {
-            domainUrl = 'localhost'
-          } else {
-            const hostParts = host.split('.')
-            if (hostParts.length > 2) {
-              domainUrl = '.' + hostParts.slice(1).join('.')
-            } else {
-              domainUrl = host
-            }
-          }
-        }
-        logInfo('[logout] clearing cookies for domain=' + domainUrl)
-        res.clearCookie('connect.sid', { httpOnly: true, secure: true })
-        res.clearCookie('connect.sid', { domain: domainUrl, httpOnly: false, path: '/', secure: true })
-      }
-
-      // Build the KC front-channel logout URL. Redirecting the browser through this
-      // clears the KC SSO browser cookie — backchannel revocation alone does not do this.
-      const buildKcLogoutUrl = (): string => {
-        if (typeof (keycloak as any).logoutUrl === 'function') {
-          let url: string = (keycloak as any).logoutUrl(postLogoutRedirect)
-          // Without id_token_hint, KC18+ shows the "Do you want to log out?"
-          // confirmation page instead of silently redirecting.
-          const idTokenHint = req.session ? (req.session as any).idToken : undefined
-          if (idTokenHint) {
-            url += '&id_token_hint=' + encodeURIComponent(idTokenHint)
-            logInfo('[logout] appended id_token_hint to KC front-channel logout URL')
-          } else {
-            logInfo('[logout] no id_token in session; KC will show the logout confirmation page')
-          }
-          logInfo('[logout] KC front-channel logout URL=' + url)
-          return url
-        }
-        logInfo('[logout] logoutUrl not a function, falling back to postLogoutRedirect')
-        return postLogoutRedirect
-      }
-
-      // A visitor whose local session was never authenticated (no keycloak-token,
-      // no idToken) has nothing to log out. Redirecting them through KC's real
-      // /logout endpoint anyway would still show the confirmation page (no
-      // id_token_hint to silently prove which session to end) and could even
-      // tear down an unrelated app's live SSO session on the same KC realm.
-      const hasAuthenticatedSession = !!(
-        req.session &&
-        (req.session.hasOwnProperty('keycloak-token') || (req.session as any).idToken)
-      )
-      if (!hasAuthenticatedSession) {
-        logInfo('[logout] no authenticated keycloak session locally; skipping KC round-trip')
-        clearCookies()
-        res.redirect(postLogoutRedirect)
-        return
-      }
-
-      logInfo('[logout] starting backchannel deauthentication')
-      this.deauthenticated(req)
-        .then(() => {
-          logInfo('[logout] backchannel deauthentication succeeded')
-          clearCookies()
-          const kcLogoutUrl = buildKcLogoutUrl()
-          logInfo('[logout] 302 -> ' + kcLogoutUrl)
-          res.redirect(kcLogoutUrl)
-        })
-        .catch((err) => {
-          logError('[logout] backchannel deauthentication failed: ' + err)
-          clearCookies()
-          const kcLogoutUrl = buildKcLogoutUrl()
-          logInfo('[logout] 302 (after error) -> ' + kcLogoutUrl)
-          res.redirect(kcLogoutUrl)
-        })
+      this.handleLogout(req, res, keycloak)
       return
     }
 
@@ -349,6 +285,67 @@ export class CustomKeycloak {
       })
     )
     middleware(req, res, next)
+  }
+
+  private handleLogout(
+    req: express.Request,
+    res: express.Response,
+    keycloak: InstanceType<typeof keycloakConnect>
+  ): void {
+    const logoutHost = req.hostname
+    logInfo(
+      '[logout] request intercepted' +
+      ' host=' + logoutHost +
+      ' protocol=' + req.protocol +
+      ' url=' + req.url
+    )
+    logDebug('[logout] headers=' + JSON.stringify(req.headers))
+    logDebug('[logout] query=' + JSON.stringify(req.query))
+    logDebug('[logout] cookies=' + JSON.stringify(req.cookies))
+    logDebug('[logout] referer=' + req.headers.referer)
+
+    const defaultRedirect = resolvePostLogoutRedirect(logoutHost)
+    const postLogoutRedirect = pickPostLogoutRedirect(req.query.redirect_uri, logoutHost, defaultRedirect)
+    logInfo('[logout] final postLogoutRedirect=' + postLogoutRedirect)
+
+    // A visitor whose local session was never authenticated (no keycloak-token,
+    // no idToken) has nothing to log out. Redirecting them through KC's real
+    // /logout endpoint anyway would still show the confirmation page (no
+    // id_token_hint to silently prove which session to end) and could even
+    // tear down an unrelated app's live SSO session on the same KC realm.
+    const hasAuthenticatedSession = !!(
+      req.session &&
+      (req.session.hasOwnProperty('keycloak-token') || (req.session as any).idToken)
+    )
+    if (!hasAuthenticatedSession) {
+      logInfo('[logout] no authenticated keycloak session locally; skipping KC round-trip')
+      clearLogoutCookies(req, res)
+      res.redirect(postLogoutRedirect)
+      return
+    }
+
+    // Terminate the Keycloak SSO session server-side via backchannel revocation
+    // (POST to KC logout endpoint with refresh_token). This avoids the browser
+    // confirmation page entirely and does not require id_token_hint.
+    // Whether it succeeds or fails, the browser is then sent through the KC
+    // front-channel logout URL so the KC SSO browser cookie is cleared too.
+    const finish = (logSuffix: string) => {
+      clearLogoutCookies(req, res)
+      const kcLogoutUrl = buildKcLogoutUrl(keycloak, req, postLogoutRedirect)
+      logInfo('[logout] 302' + logSuffix + ' -> ' + kcLogoutUrl)
+      res.redirect(kcLogoutUrl)
+    }
+
+    logInfo('[logout] starting backchannel deauthentication')
+    this.deauthenticated(req)
+      .then(() => {
+        logInfo('[logout] backchannel deauthentication succeeded')
+        finish('')
+      })
+      .catch((err) => {
+        logError('[logout] backchannel deauthentication failed: ' + err)
+        finish(' (after error)')
+      })
   }
 
   getKeyCloakObject(req: express.Request): InstanceType<typeof keycloakConnect> {
