@@ -189,6 +189,25 @@ describe('middleware', () => {
       expect(mockedRequestPost).not.toHaveBeenCalled()
     })
 
+    it('redirects the MNRE portal host to the MNRE destination host on logout', () => {
+      const originalHost = CONSTANTS.MNRE_PORTAL_HOST
+      const originalDestination = CONSTANTS.MNRE_DESTINATION_PORTAL_HOST
+      CONSTANTS.MNRE_PORTAL_HOST = 'https://mnre-portal.example.gov.in'
+      CONSTANTS.MNRE_DESTINATION_PORTAL_HOST = 'mnre.example.gov.in'
+      try {
+        const keycloak = buildKeycloak()
+        const req = buildReq({ hostname: 'mnre-portal.example.gov.in', path: '/logout' })
+        const res = buildLogoutRes()
+
+        keycloak.middleware(req, res, jest.fn())
+
+        expect(res.redirect).toHaveBeenCalledWith('https://mnre.example.gov.in/')
+      } finally {
+        CONSTANTS.MNRE_PORTAL_HOST = originalHost
+        CONSTANTS.MNRE_DESTINATION_PORTAL_HOST = originalDestination
+      }
+    })
+
     it('strips the leading "portal" subdomain for the default post-logout redirect', () => {
       const keycloak = buildKeycloak()
       const req = buildReq({ hostname: 'portal.dev.example.net', path: '/logout' })

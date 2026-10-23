@@ -7,6 +7,9 @@ const ENV_KEYS = [
   'UPSTREAM_MAX_CONNECTIONS',
   'RESTRICTED_CHARACTERS',
   'KONG_API_BASE',
+  'MNRE_PORTAL_HOST',
+  'MNRE_REDIRECT_PATH',
+  'MNRE_DESTINATION_PORTAL_HOST',
 ]
 
 const originalEnv: Record<string, string | undefined> = {}
@@ -50,6 +53,14 @@ describe('CONSTANTS defaults', () => {
     expect(CONSTANTS.KONG_API_BASE).toBe('https://portal.karmayogi.nic.in/api')
   })
 
+  it('defines MNRE portal defaults mirroring the ADI portal settings', () => {
+    ENV_KEYS.forEach((key) => delete process.env[key])
+    const { CONSTANTS } = loadEnvModule()
+    expect(CONSTANTS.MNRE_PORTAL_HOST).toBe('https://mnre-portal.igotkarmayogi.gov.in')
+    expect(CONSTANTS.MNRE_REDIRECT_PATH).toBe('/page/home')
+    expect(CONSTANTS.MNRE_DESTINATION_PORTAL_HOST).toBe('mnre.igotkarmayogi.gov.in')
+  })
+
   it('derives USER_ANALYTICS from HTTPS_HOST', () => {
     process.env.HTTPS_HOST = 'https://custom.example.com'
     const { CONSTANTS } = loadEnvModule()
@@ -62,6 +73,16 @@ describe('CONSTANTS env overrides', () => {
     process.env.KONG_API_BASE = 'https://kong.internal'
     const { CONSTANTS } = loadEnvModule()
     expect(CONSTANTS.KONG_API_BASE).toBe('https://kong.internal')
+  })
+
+  it('respects explicit MNRE env overrides', () => {
+    process.env.MNRE_PORTAL_HOST = 'https://mnre-portal.example.com'
+    process.env.MNRE_REDIRECT_PATH = '/custom'
+    process.env.MNRE_DESTINATION_PORTAL_HOST = 'mnre.example.com'
+    const { CONSTANTS } = loadEnvModule()
+    expect(CONSTANTS.MNRE_PORTAL_HOST).toBe('https://mnre-portal.example.com')
+    expect(CONSTANTS.MNRE_REDIRECT_PATH).toBe('/custom')
+    expect(CONSTANTS.MNRE_DESTINATION_PORTAL_HOST).toBe('mnre.example.com')
   })
 
   it('parses KEYCLOAK_SESSION_TTL as an integer, falling back on 0/invalid', () => {
