@@ -30,31 +30,28 @@ const dedicatedPortalLogoutTargets = (): Array<{ portalHost: string, destination
 // LOGOUT_PUBLIC_HOME_HOSTS list   -> append /public/home  e.g. spv.dev.x.net -> https://spv.dev.x.net/public/home
 // all other                       -> root '/'  e.g. https://host/
 export function resolvePostLogoutRedirect(logoutHost: string): string {
-  const defaultRedirect = 'https://' + logoutHost + '/'
-  try {
-    const lowerHost = logoutHost.toLowerCase()
-    const dedicated = dedicatedPortalLogoutTargets().find((t) => t.portalHost && t.portalHost === lowerHost)
-    if (dedicated) {
-      return 'https://' + dedicated.destinationHost + '/'
-    }
-    const hostParts = logoutHost.split('.')
-    if (hostParts.length > 2 && hostParts[0].toLowerCase() === 'portal') {
-      return 'https://' + hostParts.slice(1).join('.') + '/'
-    }
-    const publicHomeHosts = (CONSTANTS.LOGOUT_PUBLIC_HOME_HOSTS || '')
-      .split(',')
-      .map((h: string) => h.trim().toLowerCase())
-      .filter(Boolean)
-    if (publicHomeHosts.includes(lowerHost)) {
-      return 'https://' + logoutHost + '/public/home'
-    }
-  } catch (_e) { /* keep default */ }
-  return defaultRedirect
+  const lowerHost = logoutHost.toLowerCase()
+  const dedicated = dedicatedPortalLogoutTargets().find((t) => t.portalHost && t.portalHost === lowerHost)
+  if (dedicated) {
+    return 'https://' + dedicated.destinationHost + '/'
+  }
+  const hostParts = logoutHost.split('.')
+  if (hostParts.length > 2 && hostParts[0].toLowerCase() === 'portal') {
+    return 'https://' + hostParts.slice(1).join('.') + '/'
+  }
+  const publicHomeHosts = (CONSTANTS.LOGOUT_PUBLIC_HOME_HOSTS || '')
+    .split(',')
+    .map((h: string) => h.trim().toLowerCase())
+    .filter(Boolean)
+  if (publicHomeHosts.includes(lowerHost)) {
+    return 'https://' + logoutHost + '/public/home'
+  }
+  return 'https://' + logoutHost + '/'
 }
 
 // Honour a redirect_uri query param (KC7 clients pass this) when safe (same base domain).
 function pickPostLogoutRedirect(rawRedirectUri: unknown, logoutHost: string, defaultRedirect: string): string {
-  logInfo('[logout] redirect_uri query param=' + (rawRedirectUri || '(none)'))
+  logInfo('[logout] redirect_uri query param=' + (typeof rawRedirectUri === 'string' && rawRedirectUri ? rawRedirectUri : '(none)'))
   if (!rawRedirectUri || typeof rawRedirectUri !== 'string') {
     return defaultRedirect
   }
@@ -76,8 +73,8 @@ function pickPostLogoutRedirect(rawRedirectUri: unknown, logoutHost: string, def
       return rawRedirectUri
     }
     logInfo('[logout] redirect_uri rejected (cross-domain), keeping default')
-  } catch (_e) {
-    logInfo('[logout] redirect_uri invalid URL, ignoring: ' + rawRedirectUri)
+  } catch (err) {
+    logInfo('[logout] redirect_uri invalid URL, ignoring: ' + rawRedirectUri + ' (' + err + ')')
   }
   return defaultRedirect
 }
