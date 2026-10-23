@@ -261,6 +261,9 @@ export const CONSTANTS = {
   ADI_PORTAL_HOST: env.ADI_PORTAL_HOST || 'https://adikarmayogi-portal.igotkarmayogi.gov.in',
   ADI_REDIRECT_PATH: env.ADI_REDIRECT_PATH || '/page/home',
   ADIKARMAYOGI_PORTAL_HOST: env.ADIKARMAYOGI_PORTAL_HOST || 'adikarmayogi.igotkarmayogi.gov.in',
+  MNRE_PORTAL_HOST: env.MNRE_PORTAL_HOST || 'https://mnre-portal.igotkarmayogi.gov.in',
+  MNRE_REDIRECT_PATH: env.MNRE_REDIRECT_PATH || '/page/home',
+  MNRE_DESTINATION_PORTAL_HOST: env.MNRE_DESTINATION_PORTAL_HOST || 'mnre.igotkarmayogi.gov.in',
 }
 
 export const RESTRICTED_PYTHON_STMT: string[] = process.env.RESTRICTED_CHARACTERS

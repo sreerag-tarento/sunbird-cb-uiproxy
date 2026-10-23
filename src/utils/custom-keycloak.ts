@@ -191,6 +191,9 @@ export class CustomKeycloak {
       const adikarmayogi = (CONSTANTS.ADI_PORTAL_HOST || '')
         .replace(/^https?:\/\//, '')
         .toLowerCase()
+      const mnrePortalHost = (CONSTANTS.MNRE_PORTAL_HOST || '')
+        .replace(/^https?:\/\//, '')
+        .toLowerCase()
       let postLogoutRedirect = 'https://' + logoutHost + '/'
       logInfo(
             '[logout] New log added--->iiidem-portal host, redirecting to IIIDEM_PORTAL_HOST' + iimPortalHost +
@@ -208,6 +211,12 @@ export class CustomKeycloak {
           postLogoutRedirect = 'https://' + CONSTANTS.ADIKARMAYOGI_PORTAL_HOST + '/'
           logInfo(
             '[logout] adikarmayogi host, redirecting to ADIKARMAYOGI_PORTAL_HOST' +
+            ' -> postLogoutRedirect=' + postLogoutRedirect
+          )
+        } else if (mnrePortalHost && logoutHost.toLowerCase() === mnrePortalHost) {
+          postLogoutRedirect = 'https://' + CONSTANTS.MNRE_DESTINATION_PORTAL_HOST + '/'
+          logInfo(
+            '[logout] mnre host, redirecting to MNRE_DESTINATION_PORTAL_HOST' +
             ' -> postLogoutRedirect=' + postLogoutRedirect
           )
         } else if (hostParts.length > 2 && hostParts[0].toLowerCase() === 'portal') {
