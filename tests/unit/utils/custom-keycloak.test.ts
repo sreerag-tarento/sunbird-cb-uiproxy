@@ -14,7 +14,7 @@ jest.mock('../../../src/utils/request-adapter', () => ({
   request: { get: jest.fn(), post: jest.fn() },
 }))
 
-import { CustomKeycloak, deauthenticateKeycloakSession } from '../../../src/utils/custom-keycloak'
+import { CustomKeycloak, deauthenticateKeycloakSession, resolvePostLogoutRedirect } from '../../../src/utils/custom-keycloak'
 import { CONSTANTS } from '../../../src/utils/env'
 import { PERMISSION_HELPER } from '../../../src/utils/permissionHelper'
 import { request } from '../../../src/utils/request-adapter'
@@ -50,6 +50,44 @@ function buildReq(overrides: any = {}): any {
     ...overrides,
   }
 }
+
+describe('resolvePostLogoutRedirect', () => {
+  const keys = [
+    'IIM_PORTAL_HOST', 'IIIDEM_PORTAL_HOST', 'ADI_PORTAL_HOST', 'ADIKARMAYOGI_PORTAL_HOST',
+    'MNRE_PORTAL_HOST', 'MNRE_DESTINATION_PORTAL_HOST', 'LOGOUT_PUBLIC_HOME_HOSTS',
+  ]
+  // tslint:disable-next-line: no-any
+  const constants = CONSTANTS as any
+  // tslint:disable-next-line: no-any
+  const saved: any = {}
+
+  beforeEach(() => {
+    keys.forEach((k) => { saved[k] = constants[k]; constants[k] = '' })
+  })
+
+  afterEach(() => {
+    keys.forEach((k) => { constants[k] = saved[k] })
+  })
+
+  it('maps a dedicated portal host to its destination host', () => {
+    constants.MNRE_PORTAL_HOST = 'https://mnre-portal.uat.example.net'
+    constants.MNRE_DESTINATION_PORTAL_HOST = 'mnre.example.gov.in'
+    expect(resolvePostLogoutRedirect('MNRE-Portal.uat.example.net')).toBe('https://mnre.example.gov.in/')
+  })
+
+  it('strips the leading portal subdomain', () => {
+    expect(resolvePostLogoutRedirect('portal.uat.example.net')).toBe('https://uat.example.net/')
+  })
+
+  it('appends /public/home for hosts in LOGOUT_PUBLIC_HOME_HOSTS', () => {
+    constants.LOGOUT_PUBLIC_HOME_HOSTS = 'spv.uat.example.net, Other.example.net'
+    expect(resolvePostLogoutRedirect('spv.uat.example.net')).toBe('https://spv.uat.example.net/public/home')
+  })
+
+  it('falls back to the host root when no rule matches', () => {
+    expect(resolvePostLogoutRedirect('other.example.net')).toBe('https://other.example.net/')
+  })
+})
 
 describe('getKeyCloakObject', () => {
   it('falls back to the "common" keycloak instance when there is no matching tenant', () => {
