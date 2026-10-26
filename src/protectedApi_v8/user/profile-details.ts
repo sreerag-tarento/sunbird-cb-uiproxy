@@ -252,95 +252,120 @@ profileDeatailsApi.post('/createUser', async (req, res) => {
         const reqProfileDetails = _.get(req.body, 'profileDetails')
         const bpCoTrainer_ = (!_.isEmpty(reqProfileDetails) && reqProfileDetails.bpCoTrainer)
             || _.get(req.body, 'personalDetails.bpCoTrainer') || ''
+
+        // tslint:disable-next-line: all
+        const incomingProfileDetails = req.body.profileDetails || {}
+        // tslint:disable-next-line: all
+        const incomingPersonalDetails = incomingProfileDetails.personalDetails || {}
+
+        // Fields the server derives from the flat personalDetails block. Only set a key here
+        // when the flat source actually provided a value for it - otherwise leave whatever
+        // the client sent under profileDetails.personalDetails untouched (incl. defaults like
+        // additionalProperties/tags/isNgo, which would otherwise always clobber incoming data).
+        const computedPersonalDetails: Record<string, unknown> = {
+            firstname: sbfirstName_,
+            primaryEmail: sbemail_,
+        }
+        if (sbphone_ !== undefined && sbphone_ !== '') {
+            computedPersonalDetails.mobile = Number(sbphone_)
+            computedPersonalDetails.phoneVerified = sbphoneVerified_
+        }
+        if (sbdob_ !== undefined && sbdob_ !== '') {
+            computedPersonalDetails.dob = sbdob_
+        }
+        if (sbdomicileMedium_ !== undefined && sbdomicileMedium_ !== '') {
+            computedPersonalDetails.domicileMedium = sbdomicileMedium_
+        }
+        if (sbgender_ !== undefined && sbgender_ !== '') {
+            computedPersonalDetails.gender = sbgender_
+        }
+        if (sbcategory_ !== undefined && sbcategory_ !== '') {
+            computedPersonalDetails.category = sbcategory_
+        }
+        if (sbpincode_ !== undefined && sbpincode_ !== '') {
+            computedPersonalDetails.pincode = sbpincode_
+        }
+        if (req.body.personalDetails.tags) {
+            computedPersonalDetails.tags = sbtags_
+        }
+        if (req.body.personalDetails.isNgo !== undefined) {
+            computedPersonalDetails.isNgo = isNgo_
+        }
+        if (req.body.personalDetails.additionalProperties) {
+            computedPersonalDetails.additionalProperties = additionalProperties_
+        }
+        const mergedPersonalDetails = { ...incomingPersonalDetails, ...computedPersonalDetails }
+        if (mergedPersonalDetails.isNgo === undefined) {
+            mergedPersonalDetails.isNgo = false
+        }
+        if (mergedPersonalDetails.additionalProperties === undefined) {
+            mergedPersonalDetails.additionalProperties = {}
+        }
+
+        // professionalDetails: designation/group may arrive flat (personalDetails) or
+        // nested (profileDetails.professionalDetails[0]). If both are present they must agree.
+        const incomingProfessionalDetails = Array.isArray(incomingProfileDetails.professionalDetails)
+            ? incomingProfileDetails.professionalDetails
+            : []
+        const incomingProfessionalEntry = incomingProfessionalDetails[0] || {}
+        if (sbdesignation_ && incomingProfessionalEntry.designation && sbdesignation_ !== incomingProfessionalEntry.designation) {
+            const designationConflictMsg =
+                'Conflicting designation values received in personalDetails.designation and profileDetails.professionalDetails'
+            res.status(400).send({ params: { errmsg: designationConflictMsg } })
+            return
+        }
+        if (sbgroup_ && incomingProfessionalEntry.group && sbgroup_ !== incomingProfessionalEntry.group) {
+            const groupConflictMsg = 'Conflicting group values received in personalDetails.group and profileDetails.professionalDetails'
+            res.status(400).send({ params: { errmsg: groupConflictMsg } })
+            return
+        }
+        const mergedDesignation = sbdesignation_ || incomingProfessionalEntry.designation
+        const mergedGroup = sbgroup_ || incomingProfessionalEntry.group
+        let mergedProfessionalDetails
+        if (mergedDesignation || mergedGroup) {
+            let mergedEntry = { ...incomingProfessionalEntry, designation: mergedDesignation, group: mergedGroup }
+            if (!mergedDesignation) {
+                mergedEntry = _.omit(mergedEntry, 'designation')
+            }
+            if (!mergedGroup) {
+                mergedEntry = _.omit(mergedEntry, 'group')
+            }
+            mergedProfessionalDetails = [mergedEntry, ...incomingProfessionalDetails.slice(1)]
+        } else if (incomingProfessionalDetails.length) {
+            mergedProfessionalDetails = incomingProfessionalDetails
+        }
+
+        // additionalProperties (profileDetails-level, tag list): recompute tag from flat
+        // personalDetails.tags when present, otherwise retain whatever the client sent.
+        let mergedAdditionalProperties = incomingProfileDetails.additionalProperties
+        if (req.body.personalDetails.tags) {
+            mergedAdditionalProperties = { ...mergedAdditionalProperties, tag: req.body.personalDetails.tags }
+        }
+
+        // employmentDetails is never derived by the server today, so simply retain it as-is.
+        const mergedEmploymentDetails = incomingProfileDetails.employmentDetails
+
+        const isVerified = Boolean(mergedDesignation) && Boolean(mergedGroup)
+
         let sbUserProfile: Partial<ISBUser> = {
             channel: sbChannel, email: sbemail_, emailVerified: sbemailVerified_,
             firstName: sbfirstName_, phone: sbphone_,
             profileDetails: {
+                ...incomingProfileDetails,
+                additionalProperties: mergedAdditionalProperties,
+                employmentDetails: mergedEmploymentDetails,
                 mandatoryFieldsExists: false,
-                personalDetails: {
-                    additionalProperties: additionalProperties_,
-                    category: sbcategory_,
-                    dob: sbdob_,
-                    domicileMedium: sbdomicileMedium_,
-                    firstname: sbfirstName_,
-                    gender: sbgender_,
-                    isNgo: isNgo_,
-                    mobile: sbphone_ ? Number(sbphone_) : undefined,
-                    phoneVerified: sbphoneVerified_,
-                    pincode: sbpincode_,
-                    primaryEmail: sbemail_,
-                    tags: sbtags_,
-                },
-                profileDesignationStatus: notVerifiedStatus,
-                profileGroupStatus: notVerifiedStatus,
-                profileStatus: notVerifiedStatus,
+                personalDetails: mergedPersonalDetails,
+                professionalDetails: mergedProfessionalDetails,
+                profileDesignationStatus: isVerified ? verifiedStatus : notVerifiedStatus,
+                profileGroupStatus: isVerified ? verifiedStatus : notVerifiedStatus,
+                profileStatus: isVerified ? verifiedStatus : notVerifiedStatus,
             },
             roles: userRoles,
         }
 
-        sbUserProfile.profileDetails = sbUserProfile.profileDetails || {
-            personalDetails: {},
-        }
-
         if (bpCoTrainer_ !== undefined && bpCoTrainer_ !== '') {
             sbUserProfile.profileDetails.bpCoTrainer = bpCoTrainer_
-        }
-
-        if (sbphone_ === undefined || sbphone_ === '') {
-            // tslint:disable-next-line: all
-            sbUserProfile.profileDetails.personalDetails = _.omit(sbUserProfile.profileDetails.personalDetails, 'phoneVerified')
-            // tslint:disable-next-line: all
-            sbUserProfile.profileDetails.personalDetails = _.omit(sbUserProfile.profileDetails.personalDetails, 'mobile')
-        }
-
-        if (sbdob_ === undefined || sbdob_ === '') {
-            // tslint:disable-next-line: all
-            sbUserProfile.profileDetails.personalDetails = _.omit(sbUserProfile.profileDetails.personalDetails, 'dob')
-        }
-        if (sbdomicileMedium_ === undefined || sbdomicileMedium_ === '') {
-            // tslint:disable-next-line: all
-            sbUserProfile.profileDetails.personalDetails = _.omit(sbUserProfile.profileDetails.personalDetails, 'domicileMedium')
-        }
-        if (sbpincode_ === undefined || sbpincode_ === '') {
-            // tslint:disable-next-line: all
-            sbUserProfile.profileDetails.employmentDetails = _.omit(sbUserProfile.profileDetails.employmentDetails, 'pinCode')
-        }
-        if (sbgender_ === undefined || sbgender_ === '') {
-            // tslint:disable-next-line: all
-            sbUserProfile.profileDetails.personalDetails = _.omit(sbUserProfile.profileDetails.personalDetails, 'gender')
-        }
-        if (sbcategory_ === undefined || sbcategory_ === '') {
-            // tslint:disable-next-line: all
-            sbUserProfile.profileDetails.personalDetails = _.omit(sbUserProfile.profileDetails.personalDetails, 'category')
-        }
-        if (req.body.personalDetails.designation || req.body.personalDetails.group) {
-            const arrDesignation = []
-            let objDesignation = {
-                designation: sbdesignation_,
-                group: sbgroup_,
-            }
-            if (sbdesignation_ === undefined || sbdesignation_ === '') {
-                objDesignation = _.omit(objDesignation, 'designation')
-            }
-            if (sbgroup_ === undefined || sbgroup_ === '') {
-              objDesignation = _.omit(objDesignation, 'group')
-            }
-            arrDesignation.push(objDesignation)
-            const profDetailsPropertyName = 'professionalDetails'
-            sbUserProfile.profileDetails[profDetailsPropertyName] = arrDesignation
-       }
-        if (req.body.personalDetails.tags) {
-           const objAdditionalProperties = {
-             tag: (req.body.personalDetails.tags) ? req.body.personalDetails.tags :  '',
-           }
-           const additionalPropertiesPropertyName = 'additionalProperties'
-           sbUserProfile.profileDetails[additionalPropertiesPropertyName] = objAdditionalProperties
-        }
-
-        if ((sbdesignation_ !== undefined && sbdesignation_ !== '') && (sbgroup_ !== undefined && sbgroup_ !== '')) {
-            sbUserProfile.profileDetails.profileStatus = verifiedStatus
-            sbUserProfile.profileDetails.profileGroupStatus = verifiedStatus
-            sbUserProfile.profileDetails.profileDesignationStatus = verifiedStatus
         }
         if (sbphone_ === undefined || sbphone_ === '') {
             sbUserProfile = _.omit(sbUserProfile, 'phone')
