@@ -31,22 +31,34 @@ const dedicatedPortalLogoutTargets = (): Array<{ portalHost: string, destination
 // all other                       -> root '/'  e.g. https://host/
 export function resolvePostLogoutRedirect(logoutHost: string): string {
   const lowerHost = logoutHost.toLowerCase()
-  const dedicated = dedicatedPortalLogoutTargets().find((t) => t.portalHost && t.portalHost === lowerHost)
+  const targets = dedicatedPortalLogoutTargets()
+  logInfo('[logout] resolvePostLogoutRedirect logoutHost=' + logoutHost +
+    ' dedicatedTargets=' + JSON.stringify(targets) +
+    ' LOGOUT_PUBLIC_HOME_HOSTS=' + CONSTANTS.LOGOUT_PUBLIC_HOME_HOSTS)
+  const dedicated = targets.find((t) => t.portalHost && t.portalHost === lowerHost)
   if (dedicated) {
-    return 'https://' + dedicated.destinationHost + '/'
+    const result = 'https://' + dedicated.destinationHost + '/'
+    logInfo('[logout] resolvePostLogoutRedirect matched dedicated portal ' + dedicated.portalHost + ' -> ' + result)
+    return result
   }
   const hostParts = logoutHost.split('.')
   if (hostParts.length > 2 && hostParts[0].toLowerCase() === 'portal') {
-    return 'https://' + hostParts.slice(1).join('.') + '/'
+    const result = 'https://' + hostParts.slice(1).join('.') + '/'
+    logInfo('[logout] resolvePostLogoutRedirect portal.* host, stripped first subdomain -> ' + result)
+    return result
   }
   const publicHomeHosts = (CONSTANTS.LOGOUT_PUBLIC_HOME_HOSTS || '')
     .split(',')
     .map((h: string) => h.trim().toLowerCase())
     .filter(Boolean)
   if (publicHomeHosts.includes(lowerHost)) {
-    return 'https://' + logoutHost + '/public/home'
+    const result = 'https://' + logoutHost + '/public/home'
+    logInfo('[logout] resolvePostLogoutRedirect matched public-home host -> ' + result)
+    return result
   }
-  return 'https://' + logoutHost + '/'
+  const fallback = 'https://' + logoutHost + '/'
+  logInfo('[logout] resolvePostLogoutRedirect no rule matched, fallback -> ' + fallback)
+  return fallback
 }
 
 // Honour a redirect_uri query param (KC7 clients pass this) when safe (same base domain).
