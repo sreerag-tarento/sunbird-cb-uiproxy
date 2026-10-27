@@ -222,11 +222,22 @@ const notVerifiedStatus = 'NOT-VERIFIED'
 
 const hasValue = (value: unknown) => value !== undefined && value !== ''
 
+// tslint:disable-next-line: max-classes-per-file
+class HttpError extends Error {
+    status: number
+    body: unknown
+    constructor(status: number, body: unknown) {
+        super(typeof body === 'string' ? body : JSON.stringify(body))
+        this.status = status
+        this.body = body
+    }
+}
+
 // tslint:disable-next-line: all
 function extractFlatPersonalDetails(personalDetails: any) {
     return {
         additionalProperties_: personalDetails.additionalProperties ?? {},
-        isEmailRequired: personalDetails.isEmailRequired ? personalDetails.isEmailRequired : true,
+        isEmailRequired: personalDetails.isEmailRequired ?? true,
         isNgo_: personalDetails.isNgo ?? false,
         sbcategory_: personalDetails.category,
         sbdesignation_: personalDetails.designation,
@@ -241,7 +252,7 @@ function extractFlatPersonalDetails(personalDetails: any) {
         sbphoneVerified_: false,
         sbpincode_: personalDetails.pincode,
         sbtags_: personalDetails.tags ?? [],
-        userRoles: personalDetails.roles ? personalDetails.roles : undefined,
+        userRoles: personalDetails.roles ?? undefined,
     }
 }
 
@@ -429,11 +440,10 @@ async function createUserInKong(req: any, sbUserProfile: any) {
         const errMsg = createErr?.response?.data?.params?.errmsg
         const errStatus = createErr?.response?.data?.responseCode === 'CLIENT_ERROR' ? 400 : 500
         logError('Failed to create User, error msg : ' + errMsg)
-        // tslint:disable-next-line: no-string-throw
-        throw { status: errStatus, body: createErr.response.data }
+        throw new HttpError(errStatus, createErr.response.data)
     }
     if (userCreateResponse?.data?.responseCode === 'CLIENT_ERROR') {
-        throw { status: 400, body: userCreateResponse.data }
+        throw new HttpError(400, userCreateResponse.data)
     }
     return userCreateResponse
 }
@@ -451,7 +461,7 @@ async function readCreatedUser(req: any, sbUserId: string) {
         url: API_END_POINTS.kongUserRead(sbUserId),
     })
     if (sbUserReadResponse?.data?.params?.status?.toUpperCase() !== 'SUCCESS') {
-        throw { status: 500, body: failedToReadUser }
+        throw new HttpError(500, failedToReadUser)
     }
     return sbUserReadResponse
 }
@@ -502,7 +512,7 @@ async function sendWelcomeEmailFlow(sbUserId: string, sbUserProfile: any, sbChan
         url: API_END_POINTS.kongUserResetPassword,
     })
     if (passwordResetResponse?.data?.params?.status?.toUpperCase() !== 'SUCCESS') {
-        throw { status: 500, body: 'Failed to reset the password for user.' }
+        throw new HttpError(500, 'Failed to reset the password for user.')
     }
     const welcomeMailRequest = {
         allowedLoging: 'You can use your email to Login',
@@ -531,8 +541,33 @@ async function sendWelcomeEmailFlow(sbUserId: string, sbUserProfile: any, sbChan
         url: API_END_POINTS.kongSendWelcomeEmail,
     })
     if (welcomeMailResponse?.data?.params?.status?.toUpperCase() !== 'SUCCESS') {
-        throw { status: 500, body: 'Failed to send Welcome Email.' }
+        throw new HttpError(500, 'Failed to send Welcome Email.')
     }
+}
+
+// Runs an async task, forwarding any HttpError straight to the response.
+// Returns { ok: false } (after already responding) on failure so callers can bail out with a single check.
+// tslint:disable-next-line: all
+async function runOrSendError(res: any, task: () => Promise<any>) {
+    try {
+        return { ok: true, value: await task() }
+    } catch (err) {
+        res.status(err.status).send(err.body)
+        return { ok: false, value: undefined }
+    }
+}
+
+// Applies the phone/roles omissions and the MDO_LEADER conflict check to the built profile.
+// tslint:disable-next-line: all
+async function applyRoleHandling(req: any, sbUserProfile: any, sbChannel: string, flat: any) {
+    let profile = sbUserProfile
+    if (!hasValue(flat.sbphone_)) {
+        profile = _.omit(profile, 'phone')
+    }
+    if (flat.userRoles === undefined) {
+        return { conflict: null, sbUserProfile: _.omit(profile, 'roles') }
+    }
+    return { conflict: await checkMdoLeaderConflict(req, sbChannel, flat.userRoles), sbUserProfile: profile }
 }
 
 // tslint:disable-next-line: all
@@ -561,47 +596,34 @@ profileDeatailsApi.post('/createUser', async (req, res) => {
             profileDetails: merged.profileDetails,
             roles: flat.userRoles,
         }
-        if (bpCoTrainer_ !== undefined && bpCoTrainer_ !== '') {
+        if (hasValue(bpCoTrainer_)) {
             sbUserProfile.profileDetails.bpCoTrainer = bpCoTrainer_
         }
-        if (!hasValue(flat.sbphone_)) {
-            sbUserProfile = _.omit(sbUserProfile, 'phone')
-        }
-        if (flat.userRoles === undefined) {
-            sbUserProfile = _.omit(sbUserProfile, 'roles')
-        } else {
-            const mdoConflict = await checkMdoLeaderConflict(req, sbChannel, flat.userRoles)
-            if (mdoConflict) {
-                res.status(400).send(mdoConflict)
-                return
-            }
-        }
 
-        let userCreateResponse
-        try {
-            userCreateResponse = await createUserInKong(req, sbUserProfile)
-        } catch (createErr) {
-            res.status(createErr.status).send(createErr.body)
+        const roleResult = await applyRoleHandling(req, sbUserProfile, sbChannel, flat)
+        if (roleResult.conflict) {
+            res.status(400).send(roleResult.conflict)
+            return
+        }
+        sbUserProfile = roleResult.sbUserProfile
+
+        const createResult = await runOrSendError(res, () => createUserInKong(req, sbUserProfile))
+        if (!createResult.ok) {
             return
         }
 
-        const sbUserId = userCreateResponse.data.result.userId
-        let sbUserReadResponse
-        try {
-            sbUserReadResponse = await readCreatedUser(req, sbUserId)
-        } catch (readErr) {
-            res.status(readErr.status).send(readErr.body)
+        const sbUserId = createResult.value.data.result.userId
+        const readResult = await runOrSendError(res, () => readCreatedUser(req, sbUserId))
+        if (!readResult.ok) {
             return
         }
+        const sbUserReadResponse = readResult.value
 
         await maybeCreateNodeBBUser(req, sbUserReadResponse, sbUserId)
 
-        const sbUserOrgId = sbUserReadResponse.data.result.response.rootOrgId
         if (flat.isEmailRequired) {
-            try {
-                await sendWelcomeEmailFlow(sbUserId, sbUserProfile, sbChannel, flat.sbemail_)
-            } catch (emailErr) {
-                res.status(emailErr.status).send(emailErr.body)
+            const emailResult = await runOrSendError(res, () => sendWelcomeEmailFlow(sbUserId, sbUserProfile, sbChannel, flat.sbemail_))
+            if (!emailResult.ok) {
                 return
             }
         }
@@ -609,12 +631,12 @@ profileDeatailsApi.post('/createUser', async (req, res) => {
         const sbUserProfileResponse: Partial<ISunbirdbUserResponse> = {
             email: flat.sbemail_, firstName: flat.sbfirstName_,
             userId: sbUserId,
-            userOrgId: sbUserOrgId,
+            userOrgId: sbUserReadResponse.data.result.response.rootOrgId,
         }
         res.send(sbUserProfileResponse)
     } catch (err) {
         logError('test1 --> ' + createUserFailed, err)
-        res.status((err && err.response && err.response.status) || 500).send(err)
+        res.status(err?.response?.status ?? 500).send(err)
     }
 })
 
