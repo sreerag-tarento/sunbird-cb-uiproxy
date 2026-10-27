@@ -422,7 +422,7 @@ async function checkMdoLeaderConflict(req: any, sbChannel: string, userRoles: st
 }
 
 // tslint:disable-next-line: all
-async function createUserInKong(req: any, sbUserProfile: any) {
+async function createUserV5(req: any, sbUserProfile: any) {
     let userCreateResponse
     try {
         userCreateResponse = await axios({
@@ -607,7 +607,7 @@ profileDeatailsApi.post('/createUser', async (req, res) => {
         }
         sbUserProfile = roleResult.sbUserProfile
 
-        const createResult = await runOrSendError(res, () => createUserInKong(req, sbUserProfile))
+        const createResult = await runOrSendError(res, () => createUserV5(req, sbUserProfile))
         if (!createResult.ok) {
             return
         }
